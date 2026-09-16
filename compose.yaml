@@ -1,0 +1,10 @@
+services:
+  hwk-activity:
+    build: .
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    volumes:
+      - activity-data:/data
+volumes:
+  activity-data:
