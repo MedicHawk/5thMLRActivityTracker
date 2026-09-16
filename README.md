@@ -16,6 +16,16 @@ npm start
 
 For Docker, run `docker compose up -d --build` after filling in `.env`. Compose uses a persistent named volume for SQLite and `restart: unless-stopped`. Run **one instance only** against that volume. A lease file refuses a second writer; after an unclean crash it can take up to two minutes to expire. Keep the host running continuously; offline periods cannot be reconstructed.
 
+### Cybrancee bot hosting panel
+
+Cybrancee's Discord bot panel runs a chosen JavaScript file from its own Node image. Use the committed `index.js` as **BOT JS FILE**; the Dockerfile and Compose volume are for VPS/Docker deployments, not this panel. The repository includes compiled `dist/src` JavaScript so the panel can run it even when it installs production dependencies only. After changing TypeScript locally, run `npm run build` and commit the updated `dist/src` files before pushing. Choose a **Node.js 24** image in Startup (the package requires Node 24); if your panel does not offer Node 24, contact Cybrancee or use a compatible host before starting. [Cybrancee's Node version guide](https://cybrancee.com/learn/knowledge-base/how-to-change-the-nodejs-version-of-your-discord-bot/) describes the Docker Image selector.
+
+For a **new empty panel server**, set Git Repo Address to `https://github.com/MedicHawk/5thMLRActivityTracker.git`, Git Branch to `main`, and Auto Update on. Follow [Cybrancee's Git integration guide](https://cybrancee.com/learn/knowledge-base/how-to-use-git-with-cybrancee/) to install from the repository. Its clean reinstall option **deletes existing files**; back up an existing installation and its database before using that option. Start one bot server only. Cybrancee says the Git integration pulls on server start; check its console after each update.
+
+In the panel Files tab, create a private `.env` file based on `.env.example` with `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, and (recommended) `DISCORD_GUILD_ID`. Set `DATABASE_PATH=data/activity.sqlite`, `AUTO_REGISTER_COMMANDS=true`, and `APOLLO_IMPORT_ENABLED=true` only after enabling Message Content in Discord. This keeps SQLite in the panel's persistent file area rather than the Docker-only `/data` path. Never commit `.env`; the Git ignore rule excludes it. The first successful start should log “Slash commands registered” and “HWK Activity connected”. [Cybrancee's `.env` guide](https://cybrancee.com/learn/knowledge-base/how-to-use-a-env-file-for-your-discord-bot/) shows how to create the file in the panel.
+
+The panel must install the dependencies from `package.json` and `package-lock.json`, including the native `better-sqlite3` module. If startup reports a missing module, check the panel's Node package installation settings and console output before retrying. Use Cybrancee's [Backups tab](https://cybrancee.com/learn/knowledge-base/how-to-create-a-backup-for-your-discord-bot/) to back up `data/activity.sqlite` and its WAL files; stop the bot for a simple file copy. Do not configure a separate Cybrancee MySQL database for this SQLite app.
+
 Set `DISCORD_GUILD_ID` during setup for guild command registration (fast updates). Omit it to register global commands. Register again after command changes.
 
 ## Discord application setup

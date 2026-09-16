@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { Client, GatewayIntentBits, ChannelType, PermissionFlagsBits, MessageFlags, ButtonBuilder, ButtonStyle, ActionRowBuilder, AttachmentBuilder, TextInputBuilder, TextInputStyle, ModalBuilder, type Interaction, type ChatInputCommandInteraction, type ButtonInteraction, type ModalSubmitInteraction, type Guild, type Message } from 'discord.js';
 import { Store, type Config } from './db.js';
 import { Collector, type VoiceObservation } from './collect.js';
-import { commands } from './commands.js';
+import { register } from './commands.js';
 import { userReport, roleReport, attendance, segments, coverage, csv, serverCalendar, inactiveCandidates, type EventRow } from './reports.js';
 import { createEvent, updateEvent, correctAttendance, parseApollo, type EventInput } from './events.js';
 import { localMidnight, period, dateParts } from './time.js';
@@ -87,4 +87,10 @@ client.on('interactionCreate',async i=>{try{
 const checkpoint=setInterval(()=>{try{store.checkpoint(Date.now());for(const g of client.guilds.cache.keys())store.prune(g,Date.now());}catch(e){console.error('Checkpoint failed',e);}},30_000);
 function shutdown(){clearInterval(checkpoint);clearInterval(lockBeat);try{store.checkpoint(Date.now());}catch{}client.destroy();store.close();closeSync(lockFd);try{unlinkSync(lockPath);}catch{}process.exit(0);}
 process.on('SIGTERM',shutdown);process.on('SIGINT',shutdown);
+if(process.env.AUTO_REGISTER_COMMANDS==='true'){
+  const clientId=process.env.DISCORD_CLIENT_ID;
+  if(!clientId)throw new Error('AUTO_REGISTER_COMMANDS requires DISCORD_CLIENT_ID');
+  await register(token,clientId,process.env.DISCORD_GUILD_ID);
+  console.log('Slash commands registered');
+}
 await client.login(token);
