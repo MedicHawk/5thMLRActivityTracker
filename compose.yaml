@@ -4,6 +4,8 @@ services:
     restart: unless-stopped
     init: true
     env_file: .env
+    environment:
+      DATABASE_PATH: /data/activity.sqlite
     volumes:
       - activity-data:/data
 volumes:

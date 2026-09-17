@@ -4,8 +4,13 @@
   "private": true,
   "type": "module",
   "engines": { "node": ">=24 <25" },
+  "allowScripts": {
+    "better-sqlite3@12.2.0": true,
+    "esbuild@0.25.12": true
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json && esbuild ./src/bot.ts --bundle --platform=node --format=esm --target=node24 --packages=external --outfile=./index.js",
+    "postinstall": "node scripts/ensure-sqlite.mjs",
     "start": "node dist/src/bot.js",
     "dev": "tsx src/bot.ts",
     "register": "tsx src/register.ts",
