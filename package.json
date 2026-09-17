@@ -3,9 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24 <25" },
+  "engines": {
+    "node": ">=24 <27"
+  },
   "allowScripts": {
-    "better-sqlite3@12.2.0": true,
     "esbuild@0.25.12": true
   },
   "scripts": {
@@ -17,7 +18,7 @@
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
-    "better-sqlite3": "12.2.0",
+    "better-sqlite3": "13.0.3",
     "discord.js": "14.27.0",
     "dotenv": "17.2.2"
   },
