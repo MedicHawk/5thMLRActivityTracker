@@ -10,8 +10,23 @@ import { openSync, closeSync, unlinkSync, writeFileSync, statSync } from 'node:f
 const token = process.env.DISCORD_TOKEN;
 if (!token)
     throw new Error('DISCORD_TOKEN is required');
-const store = new Store(process.env.DATABASE_PATH ?? 'data/activity.sqlite');
-const lockPath = (process.env.DATABASE_PATH ?? 'data/activity.sqlite') + '.instance.lock';
+const fallbackDatabasePath = 'data/activity.sqlite';
+let databasePath = process.env.DATABASE_PATH ?? fallbackDatabasePath;
+let store;
+try {
+    store = new Store(databasePath);
+}
+catch (error) {
+    const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : '';
+    if (databasePath !== fallbackDatabasePath && ['EACCES', 'ENOENT', 'EPERM', 'EROFS'].includes(code)) {
+        console.warn(`Cannot use DATABASE_PATH ${databasePath} (${code}); falling back to ${fallbackDatabasePath}`);
+        databasePath = fallbackDatabasePath;
+        store = new Store(databasePath);
+    }
+    else
+        throw error;
+}
+const lockPath = databasePath + '.instance.lock';
 function lock() { try {
     const fd = openSync(lockPath, 'wx');
     writeFileSync(fd, `${process.pid}`);

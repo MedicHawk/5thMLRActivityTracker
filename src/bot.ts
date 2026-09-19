@@ -9,8 +9,17 @@ import { localMidnight, period, dateParts } from './time.js';
 import { openSync, closeSync, unlinkSync, writeFileSync, statSync } from 'node:fs';
 
 const token=process.env.DISCORD_TOKEN;if(!token)throw new Error('DISCORD_TOKEN is required');
-const store=new Store(process.env.DATABASE_PATH??'data/activity.sqlite');
-const lockPath=(process.env.DATABASE_PATH??'data/activity.sqlite')+'.instance.lock';
+const fallbackDatabasePath='data/activity.sqlite';
+let databasePath=process.env.DATABASE_PATH??fallbackDatabasePath;
+let store:Store;
+try{store=new Store(databasePath);}catch(error){
+  const code=typeof error==='object'&&error&&'code' in error?String(error.code):'';
+  if(databasePath!==fallbackDatabasePath&&['EACCES','ENOENT','EPERM','EROFS'].includes(code)){
+    console.warn(`Cannot use DATABASE_PATH ${databasePath} (${code}); falling back to ${fallbackDatabasePath}`);
+    databasePath=fallbackDatabasePath;store=new Store(databasePath);
+  }else throw error;
+}
+const lockPath=databasePath+'.instance.lock';
 function lock(){try{const fd=openSync(lockPath,'wx');writeFileSync(fd,`${process.pid}`);return fd;}catch{try{if(Date.now()-statSync(lockPath).mtimeMs>120_000){unlinkSync(lockPath);return lock();}}catch{}throw new Error('Another bot instance appears to own this database');}}
 const lockFd=lock();const lockBeat=setInterval(()=>{try{writeFileSync(lockPath,`${process.pid} ${Date.now()}`);}catch{}},30_000);
 const intents=[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.GuildVoiceStates,GatewayIntentBits.GuildPresences,GatewayIntentBits.GuildMembers];
