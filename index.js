@@ -430,6 +430,8 @@ var intents = [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, Gatewa
 if (process.env.APOLLO_IMPORT_ENABLED === "true") intents.push(GatewayIntentBits.MessageContent);
 var client = new Client({ intents });
 var collector = new Collector(store);
+var processStarted = Date.now();
+var gatewayEvents = { messages: 0, voice: 0, presence: 0 };
 var pending = /* @__PURE__ */ new Map();
 var safe = { parse: [], users: [], roles: [] };
 function ms(n) {
@@ -501,7 +503,11 @@ async function activityCommand(i, g) {
   if (sub === "health") {
     const c = store.config(g), row = store.db.prepare("SELECT started_at FROM guilds WHERE guild_id=?").get(g);
     const gaps = store.db.prepare("SELECT start_at,end_at,reason FROM gaps WHERE guild_id=? ORDER BY start_at DESC LIMIT 5").all(g);
-    return respond(i, `Tracking began ${stamp(row.started_at)}. Database WAL enabled.
+    const count = (table) => store.db.prepare(`SELECT COUNT(*) n FROM ${table} WHERE guild_id=?`).get(g).n;
+    const lastHeartbeat = store.db.prepare("SELECT last_at FROM heartbeats WHERE guild_id=?").get(g)?.last_at ?? null;
+    return respond(i, `Tracking began ${stamp(row.started_at)}. Process started ${stamp(processStarted)}; last database checkpoint ${stamp(lastHeartbeat)}.
+Database ${databasePath} (WAL enabled). Stored rows: ${count("messages")} messages, ${count("intervals")} completed intervals, ${count("live")} live intervals, ${count("voice_sessions")} voice sessions.
+Gateway events received this process: ${gatewayEvents.messages} messages, ${gatewayEvents.voice} voice changes, ${gatewayEvents.presence} presence changes.
 Recent coverage gaps: ${gaps.length ? gaps.map((x) => `${stamp(x.start_at)}\u2013${stamp(x.end_at)} ${x.reason}`).join("\n") : "none known"}
 Retention ${c.retentionDays} days; timezone ${c.timezone}. Continuous hosting is required.`);
   }
@@ -787,6 +793,7 @@ client.on("shardResume", () => {
   }
 });
 client.on("messageCreate", (m) => {
+  gatewayEvents.messages++;
   if (!m.guildId || !m.guild || m.author.bot || m.webhookId) return;
   const ch = m.channel, thread = ch.isThread() ? ch : null;
   const parent = thread?.parentId ?? null;
@@ -795,6 +802,7 @@ client.on("messageCreate", (m) => {
   store.member(m.guildId, m.author.id, m.member?.joinedTimestamp ?? null);
 });
 client.on("voiceStateUpdate", (oldState, newState) => {
+  gatewayEvents.voice++;
   const guild = newState.guild, member = newState.member ?? oldState.member;
   collector.voiceUpdate(voiceObs(guild, newState.id, newState.channelId, !!newState.selfDeaf, !!(member?.user.bot ?? client.users.cache.get(newState.id)?.bot), Date.now()));
   if (member && !member.user.bot) store.member(guild.id, member.id, member.joinedTimestamp);
@@ -805,6 +813,7 @@ client.on("guildMemberUpdate", (_old, m) => {
   if (m.presence) collector.presence({ guild: m.guild.id, user: m.id, games: m.presence.activities.filter((a) => a.type === 0).map((a) => a.name), bot: m.user.bot, roleIds: [...m.roles.cache.keys()], at: now });
 });
 client.on("presenceUpdate", (_old, newP) => {
+  gatewayEvents.presence++;
   const guild = newP.guild;
   if (!guild) return;
   const member = newP.member ?? guild.members.cache.get(newP.userId);

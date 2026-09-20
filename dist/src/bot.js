@@ -52,6 +52,8 @@ if (process.env.APOLLO_IMPORT_ENABLED === 'true')
     intents.push(GatewayIntentBits.MessageContent);
 const client = new Client({ intents });
 const collector = new Collector(store);
+const processStarted = Date.now();
+const gatewayEvents = { messages: 0, voice: 0, presence: 0 };
 const pending = new Map();
 const safe = { parse: [], users: [], roles: [] };
 function ms(n) { return `${(n / 3_600_000).toFixed(1)} h`; }
@@ -88,7 +90,9 @@ async function activityCommand(i, g) {
     if (sub === 'health') {
         const c = store.config(g), row = store.db.prepare('SELECT started_at FROM guilds WHERE guild_id=?').get(g);
         const gaps = store.db.prepare('SELECT start_at,end_at,reason FROM gaps WHERE guild_id=? ORDER BY start_at DESC LIMIT 5').all(g);
-        return respond(i, `Tracking began ${stamp(row.started_at)}. Database WAL enabled.\nRecent coverage gaps: ${gaps.length ? gaps.map(x => `${stamp(x.start_at)}–${stamp(x.end_at)} ${x.reason}`).join('\n') : 'none known'}\nRetention ${c.retentionDays} days; timezone ${c.timezone}. Continuous hosting is required.`);
+        const count = (table) => store.db.prepare(`SELECT COUNT(*) n FROM ${table} WHERE guild_id=?`).get(g).n;
+        const lastHeartbeat = store.db.prepare('SELECT last_at FROM heartbeats WHERE guild_id=?').get(g)?.last_at ?? null;
+        return respond(i, `Tracking began ${stamp(row.started_at)}. Process started ${stamp(processStarted)}; last database checkpoint ${stamp(lastHeartbeat)}.\nDatabase ${databasePath} (WAL enabled). Stored rows: ${count('messages')} messages, ${count('intervals')} completed intervals, ${count('live')} live intervals, ${count('voice_sessions')} voice sessions.\nGateway events received this process: ${gatewayEvents.messages} messages, ${gatewayEvents.voice} voice changes, ${gatewayEvents.presence} presence changes.\nRecent coverage gaps: ${gaps.length ? gaps.map(x => `${stamp(x.start_at)}–${stamp(x.end_at)} ${x.reason}`).join('\n') : 'none known'}\nRetention ${c.retentionDays} days; timezone ${c.timezone}. Continuous hosting is required.`);
     }
     if (sub === 'inactive') {
         await i.deferReply({ flags: MessageFlags.Ephemeral });
@@ -336,14 +340,14 @@ client.on('shardResume', () => { if (!connected) {
     seed(now);
     connected = true;
 } });
-client.on('messageCreate', m => { if (!m.guildId || !m.guild || m.author.bot || m.webhookId)
+client.on('messageCreate', m => { gatewayEvents.messages++; if (!m.guildId || !m.guild || m.author.bot || m.webhookId)
     return; const ch = m.channel, thread = ch.isThread() ? ch : null; const parent = thread?.parentId ?? null; const category = thread?.parent?.parentId ?? ('parentId' in ch ? ch.parentId : null); collector.message({ guild: m.guildId, id: m.id, user: m.author.id, channel: ch.id, parent, category: category ?? null, at: m.createdTimestamp, bot: m.author.bot, webhook: !!m.webhookId, roleIds: m.member ? [...m.member.roles.cache.keys()] : [] }); store.member(m.guildId, m.author.id, m.member?.joinedTimestamp ?? null); });
-client.on('voiceStateUpdate', (oldState, newState) => { const guild = newState.guild, member = newState.member ?? oldState.member; collector.voiceUpdate(voiceObs(guild, newState.id, newState.channelId, !!newState.selfDeaf, !!(member?.user.bot ?? client.users.cache.get(newState.id)?.bot), Date.now())); if (member && !member.user.bot)
+client.on('voiceStateUpdate', (oldState, newState) => { gatewayEvents.voice++; const guild = newState.guild, member = newState.member ?? oldState.member; collector.voiceUpdate(voiceObs(guild, newState.id, newState.channelId, !!newState.selfDeaf, !!(member?.user.bot ?? client.users.cache.get(newState.id)?.bot), Date.now())); if (member && !member.user.bot)
     store.member(guild.id, member.id, member.joinedTimestamp); });
 client.on('guildMemberUpdate', (_old, m) => { const now = Date.now(), v = m.voice; if (v.channelId)
     collector.voiceUpdate(voiceObs(m.guild, m.id, v.channelId, !!v.selfDeaf, m.user.bot, now)); if (m.presence)
     collector.presence({ guild: m.guild.id, user: m.id, games: m.presence.activities.filter(a => a.type === 0).map(a => a.name), bot: m.user.bot, roleIds: [...m.roles.cache.keys()], at: now }); });
-client.on('presenceUpdate', (_old, newP) => { const guild = newP.guild; if (!guild)
+client.on('presenceUpdate', (_old, newP) => { gatewayEvents.presence++; const guild = newP.guild; if (!guild)
     return; const member = newP.member ?? guild.members.cache.get(newP.userId); collector.presence({ guild: guild.id, user: newP.userId, games: newP.activities.filter(a => a.type === 0).map(a => a.name), bot: !!(member?.user.bot ?? client.users.cache.get(newP.userId)?.bot), roleIds: member ? [...member.roles.cache.keys()] : [], at: Date.now() }); });
 client.on('guildCreate', g => { const now = Date.now(); store.ensureGuild(g.id, now); seed(now); });
 client.on('interactionCreate', async (i) => {
