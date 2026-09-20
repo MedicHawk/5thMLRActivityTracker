@@ -1,6 +1,6 @@
 // src/bot.ts
 import "dotenv/config";
-import { Client, GatewayIntentBits, PermissionFlagsBits as PermissionFlagsBits2, MessageFlags, ButtonBuilder, ButtonStyle, ActionRowBuilder, AttachmentBuilder, TextInputBuilder, TextInputStyle, ModalBuilder } from "discord.js";
+import { Client, GatewayIntentBits, PermissionFlagsBits as PermissionFlagsBits2, MessageFlags, ButtonBuilder, ButtonStyle, ActionRowBuilder, AttachmentBuilder, TextInputBuilder, TextInputStyle, ModalBuilder, escapeMarkdown } from "discord.js";
 
 // src/db.ts
 import Database from "better-sqlite3";
@@ -440,6 +440,24 @@ function ms(n) {
 function stamp(n) {
   return n ? `<t:${Math.floor(n / 1e3)}:f>` : "none observed";
 }
+function memberLabel(g, id) {
+  const guild = client.guilds.cache.get(g), member = guild?.members.cache.get(id), user = member?.user ?? client.users.cache.get(id), name = member?.displayName ?? user?.globalName ?? user?.username;
+  return name ? escapeMarkdown(name) : `<@${id}>`;
+}
+function channelLabel(g, id) {
+  const name = client.guilds.cache.get(g)?.channels.cache.get(id)?.name;
+  return name ? `#${escapeMarkdown(name)}` : `<#${id}>`;
+}
+function auditValue(g, value) {
+  if (!value) return "none";
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed.channels)) parsed.channels = parsed.channels.map((id) => channelLabel(g, id));
+    return JSON.stringify(parsed);
+  } catch {
+    return value;
+  }
+}
 function requireAdmin(i) {
   if (!i.inGuild() || !i.guildId || !i.memberPermissions?.has(PermissionFlagsBits2.Administrator)) throw new Error("Administrator permission in a server is required");
   return i.guildId;
@@ -488,7 +506,7 @@ function formatUser(g, u, start, end, now) {
     const row = attendance2(store, g, e.id, now).rows.find((x) => x.user === u);
     return row ? `#${e.id}: ${ms(row.measuredMs)} measured, ${row.adjustmentMinutes}m manual, ${row.metMinimum ? "met" : "below"} minimum` : null;
   }).filter(Boolean);
-  return [`Member ${u} | ${dateParts(start, store.config(g).timezone).date} to ${dateParts(end - 1, store.config(g).timezone).date}`, `Messages sent ${r.messages}; rate-capped participation ${r.participation}`, `Discord voice time: connected ${ms(r.connectedMs)}, qualifying ${ms(r.qualifyingMs)}, ${r.sessions} sessions`, `Observed game activity: ${ms(r.gameMs)} (${r.games.slice(0, 5).map(([n, t]) => `${n} ${ms(t)}`).join(", ") || "none"})`, `Unique active days ${r.activeDays}; last message ${stamp(r.lastMessage)}; voice ${stamp(r.lastVoice)}; game ${stamp(r.lastGame)}`, `Top text channels ${r.textChannels.slice(0, 3).map(([c, n]) => `${c}: ${n}`).join(", ") || "none"}; voice channels ${r.voiceChannels.slice(0, 3).map(([c, n]) => `${c}: ${ms(n)}`).join(", ") || "none"}`, `Attendance: ${results.join("; ") || "none observed"}`, `Tracking began ${stamp(r.coverage.trackingStarted)}; coverage ${r.coverage.incomplete ? "incomplete" : "no known gaps"}. Hidden game presence and outages can leave gaps. Game presence does not verify server participation.`].join("\n");
+  return [`Member ${memberLabel(g, u)} | ${dateParts(start, store.config(g).timezone).date} to ${dateParts(end - 1, store.config(g).timezone).date}`, `Messages sent ${r.messages}; rate-capped participation ${r.participation}`, `Discord voice time: connected ${ms(r.connectedMs)}, qualifying ${ms(r.qualifyingMs)}, ${r.sessions} sessions`, `Observed game activity: ${ms(r.gameMs)} (${r.games.slice(0, 5).map(([n, t]) => `${n} ${ms(t)}`).join(", ") || "none"})`, `Unique active days ${r.activeDays}; last message ${stamp(r.lastMessage)}; voice ${stamp(r.lastVoice)}; game ${stamp(r.lastGame)}`, `Top text channels ${r.textChannels.slice(0, 3).map(([c, n]) => `${channelLabel(g, c)}: ${n}`).join(", ") || "none"}; voice channels ${r.voiceChannels.slice(0, 3).map(([c, n]) => `${channelLabel(g, c)}: ${ms(n)}`).join(", ") || "none"}`, `Attendance: ${results.join("; ") || "none observed"}`, `Tracking began ${stamp(r.coverage.trackingStarted)}; coverage ${r.coverage.incomplete ? "incomplete" : "no known gaps"}. Hidden game presence and outages can leave gaps. Game presence does not verify server participation.`].join("\n");
 }
 function currentMembers(i, roleId) {
   const guild = i.guild;
@@ -516,8 +534,8 @@ Retention ${c.retentionDays} days; timezone ${c.timezone}. Continuous hosting is
     await fetchMembers(i);
     const days = i.options.getInteger("days", true), r2 = period2(now, days, store.config(g).timezone), role = i.options.getRole("role", true);
     const members = currentMembers(i, role.id), result = inactiveCandidates(store, g, members.map((m) => ({ id: m.id, roles: [...m.roles.cache.keys()], joinedAt: m.joinedTimestamp })), r2.start, r2.end, now);
-    return respond(i, `${result.coverage.incomplete ? "Insufficient tracking coverage; review these unobserved members manually." : "No observed qualifying activity"} in ${days} days for current role ${role.name}: ${result.ids.join(", ") || "none"}
-Rules: messages or qualifying Discord voice time; LOA, excluded roles and new members excluded. Game presence alone is never grounds for a flag.`, [new AttachmentBuilder(Buffer.from(csv([["member_id"], ...result.ids.map((id) => [id])])), { name: "inactive.csv" })]);
+    return respond(i, `${result.coverage.incomplete ? "Insufficient tracking coverage; review these unobserved members manually." : "No observed qualifying activity"} in ${days} days for current role ${escapeMarkdown(role.name)}: ${result.ids.map((id) => memberLabel(g, id)).join(", ") || "none"}
+Rules: messages or qualifying Discord voice time; LOA, excluded roles and new members excluded. Game presence alone is never grounds for a flag.`, [new AttachmentBuilder(Buffer.from(csv([["member_name", "member_id"], ...result.ids.map((id) => [memberLabel(g, id), id])])), { name: "inactive.csv" })]);
   }
   const r = range(i, now);
   await i.deferReply({ flags: MessageFlags.Ephemeral });
@@ -527,9 +545,9 @@ Rules: messages or qualifying Discord voice time; LOA, excluded roles and new me
     const role = i.options.getRole("role", true);
     const channel = i.options.getChannel("channel");
     const ids2 = currentMembers(i, role.id).map((m) => m.id), report = roleReport(store, g, ids2, r.start, r.end, now, channel?.id);
-    return respond(i, `Current members of ${role.name} (${ids2.length}, including zero activity)${channel ? ` in channel ${channel.id}` : ""}:
-${report.rows.slice(0, 20).map((x) => `${x.user}: ${x.messages} messages, ${ms(x.qualifyingMs)} voice, ${ms(x.gameMs)} game`).join("\n")}
-Totals: ${report.totals.messages} messages, ${ms(report.totals.voiceMs)} qualifying Discord voice, ${ms(report.totals.gameMs)} observed game; ${report.totals.active} unique active members. Roles are current, not historical. Game activity has no channel attribution.`, [new AttachmentBuilder(Buffer.from(csv([["member_id", "messages", "participation", "voice_ms", "game_ms"], ...report.rows.map((x) => [x.user, x.messages, x.participation, x.qualifyingMs, x.gameMs])])), { name: "role-report.csv" })]);
+    return respond(i, `Current members of ${escapeMarkdown(role.name)} (${ids2.length}, including zero activity)${channel ? ` in ${channelLabel(g, channel.id)}` : ""}:
+${report.rows.slice(0, 20).map((x) => `${memberLabel(g, x.user)}: ${x.messages} messages, ${ms(x.qualifyingMs)} voice, ${ms(x.gameMs)} game`).join("\n")}
+Totals: ${report.totals.messages} messages, ${ms(report.totals.voiceMs)} qualifying Discord voice, ${ms(report.totals.gameMs)} observed game; ${report.totals.active} unique active members. Roles are current, not historical. Game activity has no channel attribution.`, [new AttachmentBuilder(Buffer.from(csv([["member_name", "member_id", "messages", "participation", "voice_ms", "game_ms"], ...report.rows.map((x) => [memberLabel(g, x.user), x.user, x.messages, x.participation, x.qualifyingMs, x.gameMs])])), { name: "role-report.csv" })]);
   }
   if (sub === "channel") {
     const ch = i.options.getChannel("channel", true);
@@ -541,7 +559,7 @@ Totals: ${report.totals.messages} messages, ${ms(report.totals.voiceMs)} qualify
       const d = dateParts(m.at, store.config(g).timezone).date;
       busy.set(d, (busy.get(d) ?? 0) + 1);
     }
-    return respond(i, `Channel ${ch.id}: ${msgs.length} messages sent, ${ms(v.reduce((a, x) => a + x.end_at - x.start_at, 0))} Discord voice person-hours; ${participants.size} unique participants. Busiest dates: ${[...busy].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([d, n]) => `${d} ${n}`).join(", ") || "none"}. Voice person-hours sum member time, not channel occupancy.`);
+    return respond(i, `${channelLabel(g, ch.id)}: ${msgs.length} messages sent, ${ms(v.reduce((a, x) => a + x.end_at - x.start_at, 0))} Discord voice person-hours; ${participants.size} unique participants. Busiest dates: ${[...busy].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([d, n]) => `${d} ${n}`).join(", ") || "none"}. Voice person-hours sum member time, not channel occupancy.`);
   }
   await fetchMembers(i);
   const observed = store.db.prepare(`SELECT DISTINCT user_id FROM (SELECT user_id FROM messages WHERE guild_id=? AND at>=? AND at<? UNION SELECT user_id FROM intervals WHERE guild_id=? AND end_at>? AND start_at<? UNION SELECT user_id FROM live WHERE guild_id=?)`).all(g, r.start, r.end, g, r.start, r.end, g);
@@ -551,7 +569,7 @@ Totals: ${report.totals.messages} messages, ${ms(report.totals.voiceMs)} qualify
     const summary = `Server: ${all.totals.messages} messages, ${ms(all.totals.voiceMs)} qualifying Discord voice, ${ms(all.totals.gameMs)} observed game, ${all.totals.active} unique active members. Daily active: ${cal.daily.slice(-7).map((x) => `${x.date} ${x.active}`).join(", ") || "none"}. Weekly active: ${cal.weekly.slice(-4).map((x) => `${x.week} ${x.active}`).join(", ") || "none"}. Busiest active days: ${[...cal.daily].sort((a, b) => b.active - a.active).slice(0, 3).map((x) => `${x.date} ${x.active}`).join(", ") || "none"}. Busiest message hours (server timezone): ${cal.busiestMessageHours.slice(0, 3).map(([h, n]) => `${h}:00 ${n}`).join(", ") || "none"}. Tracking began ${stamp(cov.trackingStarted)}; ${cov.incomplete ? "coverage incomplete" : "no known gaps"}.`;
     if (sub === "export") {
       if (i.options.getString("scope") === "attendance") throw new Error("Use /attendance report csv:true for member-level attendance");
-      return respond(i, summary, [new AttachmentBuilder(Buffer.from(csv([["member_id", "messages", "participation", "connected_ms", "qualifying_ms", "game_ms", "active_days"], ...all.rows.map((x) => [x.user, x.messages, x.participation, x.connectedMs, x.qualifyingMs, x.gameMs, x.activeDays])])), { name: "activity.csv" })]);
+      return respond(i, summary, [new AttachmentBuilder(Buffer.from(csv([["member_name", "member_id", "messages", "participation", "connected_ms", "qualifying_ms", "game_ms", "active_days"], ...all.rows.map((x) => [memberLabel(g, x.user), x.user, x.messages, x.participation, x.connectedMs, x.qualifyingMs, x.gameMs, x.activeDays])])), { name: "activity.csv" })]);
     }
     return respond(i, summary);
   }
@@ -559,13 +577,13 @@ Totals: ${report.totals.messages} messages, ${ms(report.totals.voiceMs)} qualify
     const metric = i.options.getString("metric", true);
     const sorted = [...all.rows].sort((a, b) => metric === "voice" ? b.qualifyingMs - a.qualifyingMs : metric === "game" ? b.gameMs - a.gameMs : b.messages - a.messages);
     return respond(i, `${metric} leaderboard:
-${sorted.slice(0, 20).map((x, n) => `${n + 1}. ${x.user}: ${metric === "messages" ? x.messages : ms(metric === "voice" ? x.qualifyingMs : x.gameMs)}`).join("\n")}`);
+${sorted.slice(0, 20).map((x, n) => `${n + 1}. ${memberLabel(g, x.user)}: ${metric === "messages" ? x.messages : ms(metric === "voice" ? x.qualifyingMs : x.gameMs)}`).join("\n")}`);
   }
   if (sub === "game") {
     const name = i.options.getString("game", true).toLowerCase();
     const rows = all.rows.map((x) => ({ id: x.user, time: x.games.filter(([g2]) => g2.toLowerCase() === name).reduce((a, [, n]) => a + n, 0) })).filter((x) => x.time);
-    return respond(i, `Observed game activity for ${name}: ${ms(rows.reduce((a, x) => a + x.time, 0))}.
-${rows.slice(0, 20).map((x) => `${x.id}: ${ms(x.time)}`).join("\n") || "none"}
+    return respond(i, `Observed game activity for ${escapeMarkdown(name)}: ${ms(rows.reduce((a, x) => a + x.time, 0))}.
+${rows.slice(0, 20).map((x) => `${memberLabel(g, x.id)}: ${ms(x.time)}`).join("\n") || "none"}
 Hidden presence or disabled activity sharing can leave gaps; this does not prove an Arma server join.`);
   }
   if (sub === "compare") {
@@ -588,10 +606,10 @@ async function fetchApollo(g, url) {
 function messageFields(post) {
   return parseApollo({ content: post.content, embeds: post.embeds.map((e) => ({ title: e.title, description: e.description, fields: e.fields.map((f) => ({ name: f.name, value: f.value })), url: e.url })) });
 }
-function eventPreview(e) {
+function eventPreview(g, e) {
   return `**${e.name}**
 Start ${stamp(e.start)}; end ${stamp(e.end)}
-Channels ${e.channels.join(", ")}; minimum ${e.minimumMinutes} minutes
+Channels ${e.channels.map((id) => channelLabel(g, id)).join(", ")}; minimum ${e.minimumMinutes} minutes
 ${e.description ?? ""}`;
 }
 async function attendanceCommand(i, g) {
@@ -607,14 +625,14 @@ async function attendanceCommand(i, g) {
     const changes = store.db.prepare("SELECT actor_id,at,reason,before_json,after_json FROM event_audit WHERE guild_id=? AND event_id=? ORDER BY at DESC LIMIT 20").all(g, id);
     const corrections = store.db.prepare("SELECT actor_id,at,reason,user_id,minutes FROM corrections WHERE guild_id=? AND event_id=? ORDER BY at DESC LIMIT 20").all(g, id);
     return respond(i, `Event #${id} setting history:
-${changes.map((x) => `${stamp(x.at)} by ${x.actor_id}: ${x.reason}; old ${x.before_json ?? "none"}; new ${x.after_json}`).join("\n") || "none"}
+${changes.map((x) => `${stamp(x.at)} by ${memberLabel(g, x.actor_id)}: ${x.reason}; old ${auditValue(g, x.before_json)}; new ${auditValue(g, x.after_json)}`).join("\n") || "none"}
 Manual corrections:
-${corrections.map((x) => `${stamp(x.at)} by ${x.actor_id}: ${x.user_id} ${x.minutes}m \u2014 ${x.reason}`).join("\n") || "none"}`);
+${corrections.map((x) => `${stamp(x.at)} by ${memberLabel(g, x.actor_id)}: ${memberLabel(g, x.user_id)} ${x.minutes}m \u2014 ${x.reason}`).join("\n") || "none"}`);
   }
   if (sub === "create") {
     const e = { name: i.options.getString("name", true), description: i.options.getString("description") ?? "", start: when(i.options.getString("start", true)), end: i.options.getString("end") ? when(i.options.getString("end", true)) : null, channels: selectedChannels(i), minimumMinutes: i.options.getInteger("minimum", true) };
     return preview(i, `Create attendance event?
-${eventPreview(e)}`, () => `Created event #${createEvent(store, g, i.user.id, e, Date.now())}`);
+${eventPreview(g, e)}`, () => `Created event #${createEvent(store, g, i.user.id, e, Date.now())}`);
   }
   if (sub === "update" || sub === "start" || sub === "end") {
     const id = i.options.getInteger("event", true), old = eventRow(g, id), reason = i.options.getString("reason", true);
@@ -631,8 +649,8 @@ ${eventPreview(e)}`, () => `Created event #${createEvent(store, g, i.user.id, e,
       if (minimum !== null) patch.minimumMinutes = minimum;
     }
     return preview(i, `Update event #${id}? Reason: ${reason}
-Existing: ${old.name}; ${stamp(old.start_at)}\u2013${stamp(old.end_at)}; channels ${JSON.parse(old.channels).join(", ")}; minimum ${old.min_ms / 6e4}m
-New values: ${JSON.stringify(patch)}`, () => {
+Existing: ${old.name}; ${stamp(old.start_at)}\u2013${stamp(old.end_at)}; channels ${JSON.parse(old.channels).map((channel) => channelLabel(g, channel)).join(", ")}; minimum ${old.min_ms / 6e4}m
+New values: ${JSON.stringify({ ...patch, channels: patch.channels?.map((channel) => channelLabel(g, channel)) })}`, () => {
       const recalculated = updateEvent(store, g, id, i.user.id, patch, reason, Date.now());
       return `Updated event #${id}. Attendance ${recalculated ? "recalculated from stored voice intervals" : "settings revised"}.`;
     });
@@ -648,9 +666,9 @@ New values: ${JSON.stringify(patch)}`, () => {
     const rows = report.rows.filter((x) => (!member || x.user === member.id) && (!role || i.guild.members.cache.get(x.user)?.roles.cache.has(role.id)));
     const gaps = report.coverage.gaps.map((x) => `${stamp(x.start_at)}\u2013${stamp(x.end_at)}`).join(", ");
     const body = `Discord voice attendance \u2014 #${id} ${report.event.name}
-${rows.slice(0, 25).map((x) => `${x.user}: measured ${ms(x.measuredMs)}; manual ${x.adjustmentMinutes}m; ${x.metMinimum ? "met minimum" : "below minimum"}; arrival ${stamp(x.arrival)}; departure ${stamp(x.departure)}`).join("\n") || "No observed attendance"}
+${rows.slice(0, 25).map((x) => `${memberLabel(g, x.user)}: measured ${ms(x.measuredMs)}; manual ${x.adjustmentMinutes}m; ${x.metMinimum ? "met minimum" : "below minimum"}; arrival ${stamp(x.arrival)}; departure ${stamp(x.departure)}`).join("\n") || "No observed attendance"}
 ${report.recalculated ? "Recalculated after event settings changed. " : ""}${report.coverage.incomplete ? "Coverage incomplete from tracking start, retention, or gaps. " : ""}${gaps ? `Known unobserved windows: ${gaps}. ` : ""}${report.event.source_url ?? ""}`;
-    const files = i.options.getBoolean("csv") ? [new AttachmentBuilder(Buffer.from(csv([["member_id", "arrival_utc", "departure_utc", "measured_ms", "manual_minutes", "met_minimum"], ...rows.map((x) => [x.user, x.arrival ? new Date(x.arrival).toISOString() : "", x.departure ? new Date(x.departure).toISOString() : "", x.measuredMs, x.adjustmentMinutes, x.metMinimum])])), { name: `attendance-${id}.csv` })] : void 0;
+    const files = i.options.getBoolean("csv") ? [new AttachmentBuilder(Buffer.from(csv([["member_name", "member_id", "arrival_utc", "departure_utc", "measured_ms", "manual_minutes", "met_minimum"], ...rows.map((x) => [memberLabel(g, x.user), x.user, x.arrival ? new Date(x.arrival).toISOString() : "", x.departure ? new Date(x.departure).toISOString() : "", x.measuredMs, x.adjustmentMinutes, x.metMinimum])])), { name: `attendance-${id}.csv` })] : void 0;
     return respond(i, body, files);
   }
   if (sub === "import") {
@@ -667,7 +685,7 @@ ${report.recalculated ? "Recalculated after event settings changed. " : ""}${rep
     }
     const e = { name: fields.name, description: fields.description ?? "", start: fields.start, end: fields.end, channels, minimumMinutes, source: "apollo", sourceUrl: url, sourceMessageId: post.id, sourceEventId: fields.eventId ?? void 0 };
     return preview(i, `Apollo import preview (RSVP is not attendance):
-${eventPreview(e)}`, () => `Imported event #${createEvent(store, g, i.user.id, e, Date.now())}`);
+${eventPreview(g, e)}`, () => `Imported event #${createEvent(store, g, i.user.id, e, Date.now())}`);
   }
   if (sub === "sync") {
     await i.deferReply({ flags: MessageFlags.Ephemeral });
@@ -737,12 +755,12 @@ async function privacyCommand(i, g) {
   const sub = i.options.getSubcommand();
   if (sub === "delete-member") {
     const u = i.options.getUser("member", true);
-    return preview(i, `Permanently delete stored activity, attendance corrections, and member metadata for ${u.id} in this server?`, () => {
+    return preview(i, `Permanently delete stored activity, attendance corrections, and member metadata for ${memberLabel(g, u.id)} in this server?`, () => {
       store.deleteMember(g, u.id);
-      return `Deleted stored activity for ${u.id}.`;
+      return `Deleted stored activity for ${memberLabel(g, u.id)}.`;
     });
   }
-  return preview(i, `Permanently reset all activity, events, gaps, and corrections in server ${g}?`, () => {
+  return preview(i, "Permanently reset all activity, events, gaps, and corrections in this server?", () => {
     store.resetGuild(g, Date.now());
     return "Server activity reset; tracking starts now.";
   });
@@ -859,7 +877,7 @@ client.on("interactionCreate", async (i) => {
       apolloPending.delete(postId);
       const e = { name: i.fields.getTextInputValue("name"), description: p.description, start: when(i.fields.getTextInputValue("start")), end: when(i.fields.getTextInputValue("end")), channels: p.channels, minimumMinutes: p.minimumMinutes, source: "apollo", sourceUrl: p.url, sourceMessageId: postId, sourceEventId: p.eventId ?? void 0 };
       await preview(i, `Apollo import preview (manually completed fields):
-${eventPreview(e)}`, () => `Imported event #${createEvent(store, g, i.user.id, e, Date.now())}`);
+${eventPreview(g, e)}`, () => `Imported event #${createEvent(store, g, i.user.id, e, Date.now())}`);
       return;
     }
   } catch (err) {
